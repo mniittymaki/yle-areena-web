@@ -19,7 +19,25 @@ Ladatut tiedostot tallentuvat `./downloads`-kansioon.
 - Laatuvalinta (paras / 1080p / 720p)
 - Tekstitykset (kaikki, suomi, ruotsi tai ei)
 - Upota tekstitykset MKV-tiedostoon
+- **Plex-yhteensopiva tallennus** (Automaattinen / Elokuva / TV-sarja)
 - Ladattujen tiedostojen lista ja latauslinkit
+
+### Plex-kansiorakenne
+
+Kun valitset Plex-tilan, tiedostot tallentuvat esimerkiksi:
+
+```
+downloads/
+  Movies/
+    Elokuvan nimi (2024)/
+      Elokuvan nimi (2024).mkv
+  TV Shows/
+    Sarjan nimi (2023)/
+      Season 01/
+        Sarjan nimi (2023) - S01E03 - Jakson nimi.mkv
+```
+
+Osoita Plex-kirjastosi näihin kansioihin (`Movies` ja `TV Shows`).
 
 ## Huomiot
 
