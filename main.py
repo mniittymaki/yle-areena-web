@@ -1,26 +1,59 @@
 from nicegui import ui, app
 import subprocess
 import os
+import re
 import threading
 from pathlib import Path
-from datetime import datetime
 
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/downloads"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 download_status = {"running": False, "message": "", "progress": ""}
 
+
+def sanitize_filename(name: str) -> str:
+    """Keep original title readable but remove filesystem-problematic characters."""
+    name = name.strip()
+    # Replace characters that are illegal on most filesystems
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
+    # Collapse multiple spaces/underscores
+    name = re.sub(r"[\s_]+", " ", name).strip()
+    return name or "video"
+
+
+def get_title(url: str) -> str:
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "--print", "title", "--no-warnings", url],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "video"
+
+
 def run_download(url: str, quality: str, sub_langs: str, embed: bool):
     download_status["running"] = True
-    download_status["message"] = "Aloitetaan latausta..."
+    download_status["message"] = "Haetaan otsikkoa..."
     download_status["progress"] = ""
+
+    raw_title = get_title(url)
+    safe_title = sanitize_filename(raw_title)
+    download_status["message"] = f"Ladataan: {safe_title}"
 
     cmd = [
         "yt-dlp",
         "--newline",
         "--progress",
-        "-o", str(DOWNLOAD_DIR / "%(title)s.%(ext)s"),
+        "--no-part",
         "--merge-output-format", "mkv",
+        "-o", str(DOWNLOAD_DIR / f"{safe_title}.%(ext)s"),
+        "--paths", f"temp:{DOWNLOAD_DIR}",
+        "--paths", f"home:{DOWNLOAD_DIR}",
     ]
 
     if quality == "best":
@@ -53,7 +86,7 @@ def run_download(url: str, quality: str, sub_langs: str, embed: bool):
                     download_status["message"] = line
         process.wait()
         if process.returncode == 0:
-            download_status["message"] = "Lataus valmis!"
+            download_status["message"] = f"Valmis: {safe_title}"
         else:
             download_status["message"] = f"Virhe (exit {process.returncode})"
     except Exception as e:
