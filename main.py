@@ -14,35 +14,78 @@ download_status = {"running": False, "message": "", "progress": ""}
 def sanitize_filename(name: str) -> str:
     """Keep original title readable but remove filesystem-problematic characters."""
     name = name.strip()
-    # Replace characters that are illegal on most filesystems
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
-    # Collapse multiple spaces/underscores
     name = re.sub(r"[\s_]+", " ", name).strip()
     return name or "video"
 
 
-def get_title(url: str) -> str:
+def get_metadata(url: str) -> dict:
+    """Fetch useful metadata from yt-dlp."""
     try:
         result = subprocess.run(
-            ["yt-dlp", "--print", "title", "--no-warnings", url],
+            [
+                "yt-dlp",
+                "--print",
+                "%(title)s|%(series)s|%(season_number)s|%(episode_number)s|%(release_year)s|%(upload_date)s",
+                "--no-warnings",
+                url,
+            ],
             capture_output=True,
             text=True,
             timeout=30,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+            parts = result.stdout.strip().split("|")
+            return {
+                "title": parts[0] if len(parts) > 0 else "video",
+                "series": parts[1] if len(parts) > 1 and parts[1] != "NA" else None,
+                "season": int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None,
+                "episode": int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else None,
+                "year": parts[4] if len(parts) > 4 and parts[4] != "NA" else (
+                    parts[5][:4] if len(parts) > 5 and len(parts[5]) >= 4 else None
+                ),
+            }
     except Exception:
         pass
-    return "video"
+    return {"title": "video"}
 
 
-def run_download(url: str, quality: str, sub_langs: str, embed: bool):
+def build_plex_path(meta: dict, content_type: str) -> Path:
+    """Build a Plex-friendly relative path."""
+    title = sanitize_filename(meta.get("title") or "video")
+    year = meta.get("year") or ""
+    series = sanitize_filename(meta.get("series") or title)
+    season = meta.get("season")
+    episode = meta.get("episode")
+
+    if content_type == "movie" or (content_type == "auto" and not season and not episode):
+        folder = f"{title} ({year})" if year else title
+        filename = f"{folder}.%(ext)s"
+        return Path("Movies") / folder / filename
+
+    season_num = f"{season:02d}" if season else "01"
+    episode_num = f"{episode:02d}" if episode else "01"
+    show_folder = f"{series} ({year})" if year else series
+    season_folder = f"Season {season_num}"
+    filename = f"{show_folder} - S{season_num}E{episode_num} - {title}.%(ext)s"
+    return Path("TV Shows") / show_folder / season_folder / filename
+
+
+def run_download(url: str, quality: str, sub_langs: str, embed: bool, content_type: str = "auto"):
     download_status["running"] = True
-    download_status["message"] = "Haetaan otsikkoa..."
+    download_status["message"] = "Haetaan metatietoja..."
     download_status["progress"] = ""
 
-    raw_title = get_title(url)
-    safe_title = sanitize_filename(raw_title)
+    meta = get_metadata(url)
+    safe_title = sanitize_filename(meta.get("title") or "video")
+
+    if content_type == "none":
+        out_path = DOWNLOAD_DIR / f"{safe_title}.%(ext)s"
+    else:
+        rel = build_plex_path(meta, content_type)
+        out_path = DOWNLOAD_DIR / rel
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
     download_status["message"] = f"Ladataan: {safe_title}"
 
     cmd = [
@@ -51,7 +94,7 @@ def run_download(url: str, quality: str, sub_langs: str, embed: bool):
         "--progress",
         "--no-part",
         "--merge-output-format", "mkv",
-        "-o", str(DOWNLOAD_DIR / f"{safe_title}.%(ext)s"),
+        "-o", str(out_path),
         "--paths", f"temp:{DOWNLOAD_DIR}",
         "--paths", f"home:{DOWNLOAD_DIR}",
     ]
@@ -112,6 +155,11 @@ def main_page():
             value="fi,sv,all",
             label="Tekstitykset",
         )
+        content_type = ui.select(
+            {"auto": "Automaattinen (Plex)", "movie": "Elokuva (Plex)", "tv": "TV-sarja (Plex)", "none": "Tavallinen"},
+            value="auto",
+            label="Tallennustapa",
+        )
         embed = ui.checkbox("Upota tekstitykset MKV:hen", value=True)
 
     status_label = ui.label("Valmis").classes("text-lg")
@@ -137,7 +185,7 @@ def main_page():
             return
         threading.Thread(
             target=run_download,
-            args=(url, quality.value, subs.value, embed.value),
+            args=(url, quality.value, subs.value, embed.value, content_type.value),
             daemon=True,
         ).start()
         ui.notify("Lataus aloitettu")
@@ -150,15 +198,16 @@ def main_page():
 
     def refresh_files():
         files_container.clear()
-        files = sorted(DOWNLOAD_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
+        files = sorted(DOWNLOAD_DIR.rglob("*"), key=lambda p: p.stat().st_mtime if p.is_file() else 0, reverse=True)
+        files = [f for f in files if f.is_file()][:30]
         if not files:
             with files_container:
                 ui.label("Ei ladattuja tiedostoja.")
             return
         with files_container:
-            for f in files[:30]:
+            for f in files:
                 with ui.row().classes("items-center gap-2"):
-                    ui.label(f.name)
+                    ui.label(str(f.relative_to(DOWNLOAD_DIR)))
                     ui.button(
                         "Lataa",
                         on_click=lambda path=f: ui.download(path),
