@@ -5,4 +5,11 @@ services:
       - "8080:8080"
     volumes:
       - ./downloads:/downloads
+      # Osoita nämä omiin Plex-kansioihisi, esim.:
+      # - /path/to/plex/Movies:/plex/Movies
+      # - /path/to/plex/TV:/plex/TV
+    environment:
+      - DOWNLOAD_DIR=/downloads
+      # - PLEX_MOVIES=/plex/Movies
+      # - PLEX_TV=/plex/TV
     restart: unless-stopped
