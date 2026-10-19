@@ -8,6 +8,15 @@ from pathlib import Path
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/downloads"))
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# Plex-kansiot (oletuksena DOWNLOAD_DIR:n alle, voidaan ylikirjoittaa ympäristömuuttujilla tai asetuksilla)
+PLEX_MOVIES = Path(os.getenv("PLEX_MOVIES", DOWNLOAD_DIR / "Movies"))
+PLEX_TV = Path(os.getenv("PLEX_TV", DOWNLOAD_DIR / "TV Shows"))
+
+settings = {
+    "movies": str(PLEX_MOVIES),
+    "tv": str(PLEX_TV),
+}
+
 download_status = {"running": False, "message": "", "progress": ""}
 
 
@@ -51,24 +60,27 @@ def get_metadata(url: str) -> dict:
 
 
 def build_plex_path(meta: dict, content_type: str) -> Path:
-    """Build a Plex-friendly relative path."""
+    """Build a Plex-friendly path using configured base directories."""
     title = sanitize_filename(meta.get("title") or "video")
     year = meta.get("year") or ""
     series = sanitize_filename(meta.get("series") or title)
     season = meta.get("season")
     episode = meta.get("episode")
 
+    movies_base = Path(settings["movies"])
+    tv_base = Path(settings["tv"])
+
     if content_type == "movie" or (content_type == "auto" and not season and not episode):
         folder = f"{title} ({year})" if year else title
         filename = f"{folder}.%(ext)s"
-        return Path("Movies") / folder / filename
+        return movies_base / folder / filename
 
     season_num = f"{season:02d}" if season else "01"
     episode_num = f"{episode:02d}" if episode else "01"
     show_folder = f"{series} ({year})" if year else series
     season_folder = f"Season {season_num}"
     filename = f"{show_folder} - S{season_num}E{episode_num} - {title}.%(ext)s"
-    return Path("TV Shows") / show_folder / season_folder / filename
+    return tv_base / show_folder / season_folder / filename
 
 
 def run_download(url: str, quality: str, sub_langs: str, embed: bool, content_type: str = "auto"):
@@ -82,8 +94,7 @@ def run_download(url: str, quality: str, sub_langs: str, embed: bool, content_ty
     if content_type == "none":
         out_path = DOWNLOAD_DIR / f"{safe_title}.%(ext)s"
     else:
-        rel = build_plex_path(meta, content_type)
-        out_path = DOWNLOAD_DIR / rel
+        out_path = build_plex_path(meta, content_type)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
     download_status["message"] = f"Ladataan: {safe_title}"
@@ -193,6 +204,21 @@ def main_page():
     ui.button("Lataa", on_click=start).classes("bg-blue-600 text-white")
 
     ui.separator()
+    ui.markdown("### Plex-kansiot")
+    with ui.row().classes("w-full gap-4"):
+        movies_input = ui.input("Elokuvakansio", value=settings["movies"]).classes("w-1/2")
+        tv_input = ui.input("TV-sarjakansio", value=settings["tv"]).classes("w-1/2")
+
+    def save_settings():
+        settings["movies"] = movies_input.value.strip() or str(PLEX_MOVIES)
+        settings["tv"] = tv_input.value.strip() or str(PLEX_TV)
+        Path(settings["movies"]).mkdir(parents=True, exist_ok=True)
+        Path(settings["tv"]).mkdir(parents=True, exist_ok=True)
+        ui.notify("Asetukset tallennettu")
+
+    ui.button("Tallenna kansiot", on_click=save_settings).props("outline")
+
+    ui.separator()
     ui.markdown("### Ladatut tiedostot")
     files_container = ui.column()
 
@@ -207,7 +233,7 @@ def main_page():
         with files_container:
             for f in files:
                 with ui.row().classes("items-center gap-2"):
-                    ui.label(str(f.relative_to(DOWNLOAD_DIR)))
+                    ui.label(str(f.relative_to(DOWNLOAD_DIR)) if f.is_relative_to(DOWNLOAD_DIR) else f.name)
                     ui.button(
                         "Lataa",
                         on_click=lambda path=f: ui.download(path),
